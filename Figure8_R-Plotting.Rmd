@@ -1,0 +1,179 @@
+
+
+
+```{r}
+#theme
+my_theme = function(){
+  theme(panel.background = element_blank(),
+       # legend.key.height = unit(0.2, 'cm'),
+       #  legend.text = element_text(size=textsz),
+       #  legend.title = element_text(size=textsz),
+         axis.ticks = element_line(colour = "black", linewidth = lnwt),
+         axis.line = element_line(colour = "black", linewidth = lnwt),
+      #   axis.text.x = element_text(colour = "black", hjust = 0.5, size = textsz),
+      #   axis.text.y = element_text(colour = "black", size = textsz),
+      #   axis.title.x = element_text(size=textsz, margin = margin(t=10)),
+      #   aspect.ratio = 5, 
+        
+        
+  )
+}
+textsz = 12
+lnwt = 0.2
+pointszBig = 1
+pointszSmall = 0.2
+
+```
+
+reorder data
+```{r, fig.width=16, fig.height=10}
+# Load necessary libraries
+library(dplyr)
+library(ggplot2)
+library(tidyr)
+library(openxlsx)
+library(readxl)
+
+channel <- "Red_Confluence" # Red_Confluence, Brightfield_Confluence
+
+excel_file <- paste0("Figure8-SourceData1_Brightfield_Confluence.xlsx")
+#excel_file <- paste0("Figure8-SourceData2_Red_Confluence.xlsx")
+  
+# Read the Excel file
+labelled_data <- read.xlsx(excel_file) ## CAVE Code only works when labelled_data comes directly form DataExtraction because Time is read as "X..0" instead of 0
+
+labelled_data_plotting <- labelled_data %>%
+  pivot_longer(
+    cols = 10:ncol(labelled_data),
+    names_to = "Time",
+    values_to = "Value"
+  ) %>%
+  mutate(Time = as.numeric(Time)) %>% # Convert time from string to numeric
+  mutate(Value = as.numeric(Value))  # Convert time from string to numeric
+
+#labelled_data_plotting$Value <- round(labelled_data_plotting$Value, 2)
+
+labelled_data_plotting <- labelled_data_plotting %>%
+  group_by(Identifier, Time) %>%  # Include Time for time-resolved stats
+  mutate(
+    mean_value = mean(Value, na.rm = TRUE),
+    mean_value_sd = sd(Value, na.rm = TRUE)
+  ) %>%
+  filter(Identifier == first(Identifier)) %>% 
+  distinct(Identifier, Time, .keep_all = TRUE) %>% # Keep one row per Identifier and Time
+  ungroup()
+
+sub_sample <- subset(labelled_data_plotting, (`MM` == "MM14") & (`Cell_Line` == "HCT-116") & (`Time` == 0) & (`GCV` == "0"))
+
+```
+
+
+Normalization
+```{r}
+#backgroundsubtraction
+
+#normalize to timepoint
+# Step 1: Extract baseline (Time == x) mean values
+x <- 46
+baseline <- labelled_data_plotting %>%
+  filter(Time == x) %>%
+  select(Identifier, baseline_mean_tx = mean_value, baseline_sd_tx = mean_value_sd) 
+
+# Step 2: Join baseline values into full dataset
+normalized_data <- labelled_data_plotting %>%
+  left_join(baseline, by = "Identifier") %>%
+  mutate(normalized_mean_tx = mean_value / baseline_mean_tx) %>%
+  mutate(normalized_mean_tx_sd = normalized_mean_tx * sqrt(((mean_value_sd / mean_value)^2) + ((baseline_sd_tx / baseline_mean_tx)^2)))
+
+
+#backgroundadjusted to EF1a_HSVtk 46h
+# Step 1: Extract baseline (Time == x) mean values
+baseline <- normalized_data %>%
+  filter(Time == x, Circuit == "EF1a_HSVTK") %>%
+  select(Cell_Line, Transfection, GCV, baseline_mean_HSVTKtx = mean_value, baseline_sd_HSVTKtx = mean_value_sd)
+
+# Step 2: Join baseline values into full dataset and calculate background ajustment
+normalized_data <- normalized_data %>%
+  left_join(baseline, by = c("Cell_Line", "Transfection", "GCV")) %>%
+  mutate(baseline_differenceInBackgroundToHSVTKtx = baseline_mean_HSVTKtx - baseline_mean_tx, 
+         backgroundadjustedToHSVTKtx_mean = mean_value + baseline_differenceInBackgroundToHSVTKtx,
+         backgroundadjustedToHSVTKtx_mean_sd = mean_value_sd)
+
+
+sub_sample <- subset(normalized_data, (`Cell_Line` == "HCT-116") & (`Time` %in% c("46", "180")) & (`GCV` == "50")) # & (`Transfection` == "F_1x"))
+
+
+# normalized_data <- normalized_data %>%
+ # mutate(across(where(is.numeric), ~ ifelse(is.na(.) | is.nan(.) | is.infinite(.), 0, .)))
+
+assign(paste("normalized_data_", channel, sep = ""), normalized_data )
+
+```
+
+
+
+
+Plot Data
+```{r, fig.width=10, fig.height=5}
+
+channel_plot <- "Red_Confluence" # Red_Confluence, Brightfield_Confluence
+y_axis <- "backgroundadjustedToHSVTKtx_mean" # "mean_value" , "normalized_mean_tx" ,  backgroundadjustedToHSVTKtx_mean
+sd_y <- paste0(y_axis, "_sd")
+GCV_condition <- "50"
+Mastermix <- c("MM10", "MM11", "MM12", "MM14") #c("MM10", "MM11", "MM12", "MM13", "MM14")
+timeframe <- c(46, 180)
+celllines <- c("SW620")
+transfection <- c("F_0.5x", "F_1x", "F_1.5x" ) # c("F_0.5x", "F_1x", "F_1.5x" )
+
+plot_name <- paste("Timecourse__", channel_plot, "__" , celllines[1], transfection[1], celllines[2], "__", y_axis,  "__GCV=", GCV_condition, "__t=", timeframe[1], "-", timeframe[2],  sep = "")
+
+filtered_data <- get(paste0("normalized_data_", channel_plot))
+filtered_data <- subset(filtered_data, !(`GCV` %in% c("DMSO", "Triton", "pos.Ctrl")))
+filtered_data <- subset(filtered_data, (`Transfection` %in% transfection))
+filtered_data <- subset(filtered_data, (`MM` %in% Mastermix))
+filtered_data <- subset(filtered_data, (`Time` >= timeframe[1]) & (`Time` <= timeframe[2]))
+filtered_data <- subset(filtered_data, (`GCV` == GCV_condition))
+filtered_data <- subset(filtered_data, (`Cell_Line` %in% celllines))
+
+filtered_data <- subset(filtered_data, !((`Cell_Line` == "HCT-116") & (`Transfection` == "F_1x")))
+
+plot <- ggplot(filtered_data, aes(x = Time, y = .data[[y_axis]], color = Circuit, linetype = Cell_Line, group = Identifier)) +
+  geom_ribbon(aes(ymin = .data[[y_axis]] - .data[[sd_y]], ymax = .data[[y_axis]] + .data[[sd_y]], fill = Circuit), alpha = 0.1, color = NA) +
+  geom_line(size = 1) +
+  theme_minimal() +
+  labs(x = "Time", y = paste0(channel_plot, " [", y_axis , "]"), title = plot_name) +
+ # my_theme()
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+plot
+
+
+
+```
+
+Save plots
+
+```{r}
+ # Define the output file path and filename
+
+
+  output_file <- file.path("/Users/gasenn/Desktop/R scripts/E.GS3.137.1_HsvTK/Plots_with_Code", paste0("003_", plot_name, ".svg"))
+  print(output_file)
+  
+  # Save the plot as a svg file with specified width and height
+  ggsave(output_file, plot = plot, width = 10, height = 5)
+  
+  warnings()
+```
+
+
+
+
+
+
+
+
+
+
+
+
