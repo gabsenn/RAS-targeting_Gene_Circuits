@@ -1,0 +1,174 @@
+
+
+
+```{r}
+# Install and load the required packages if not already installed
+if (!requireNamespace("readxl", quietly = TRUE)) {
+  install.packages("readxl")
+}
+if (!requireNamespace("ggplot2", quietly = TRUE)) {
+  install.packages("ggplot2")
+}
+if (!requireNamespace("openxlsx", quietly = TRUE)) {
+  install.packages("openxlsx")
+}
+
+# Load the required libraries
+
+
+```
+
+```{r}
+#theme
+my_theme = function(){
+  theme(panel.background = element_blank(),
+       # legend.key.height = unit(0.2, 'cm'),
+       #  legend.text = element_text(size=textsz),
+       #  legend.title = element_text(size=textsz),
+         axis.ticks = element_line(colour = "black", linewidth = lnwt),
+         axis.line = element_line(colour = "black", linewidth = lnwt),
+      #   axis.text.x = element_text(colour = "black", hjust = 0.5, size = textsz),
+      #   axis.text.y = element_text(colour = "black", size = textsz),
+      #   axis.title.x = element_text(size=textsz, margin = margin(t=10)),
+      #   aspect.ratio = 5, 
+        
+        
+  )
+}
+textsz = 12
+lnwt = 0.2
+pointszBig = 1
+pointszSmall = 0.2
+```
+
+
+```{r, fig.width=16, fig.height=10}
+library(openxlsx)
+library(readxl)
+library(ggplot2)
+library(ggsignif)
+
+# Replace 'your_file.xlsx' with the path to your Excel file
+excel_file <- "Figure7-SourceData1.xlsx"
+
+
+
+# Read the Excel file
+data <- read_excel(excel_file)
+
+  
+ ### DEFINE VARIABLES:
+# name the plot
+  Rmd_name <- "011_Cancer_boxplot_figure7_["
+
+  x_axis <- "RAS_mutation"               # RAS_mutation
+  y_axis <- "Normalized Output [RU]"     #  "Absolute Transfection" "Normalized Output [RU]" or "normalized Output normalized to SZ" or "Scaled Output [percent]" or "Normalized Output [percent]"
+  fill_color <- "`cell line`"                   # percent, mean or "cell line"
+  circuit <- c("RAS Circuit", "Control")                     # "yes" or "no"  -> if both then #-out filtering
+  split_by <- "`Sensor`"              # `Sensor` or `cell line`
+  cell_line <- "all"                     # all or specify cell line
+  Mastermix <- c("all")                     # all or specify MM
+  exclude_MM <- ""                    #
+  exclude_cellline <- c("")
+    
+  #exclude a MM/cellline
+  excl <- exclude_MM
+  if (exclude_MM[1] != "") { excl <- paste("_excl.", exclude_MM) }
+  if (exclude_cellline[1] != "") {
+    if (exclude_MM != "") { excl <- paste(excl, "&") }
+    if (exclude_MM == "") { excl <- "_excl." }
+    excl <- paste(excl, exclude_cellline)
+  }
+
+    plot_name <- paste(Rmd_name, "y=", y_axis, "_x=", x_axis, "_split by ", split_by, "_", "_", cell_line, "_", Mastermix, excl, "_fill=", fill_color, sep = "")
+  
+# Filter
+  # Filter out cell lines with no data
+  filtered_data <- data[!is.na(data$`Normalized Output [RU]`), ]
+  # mCerulean or mScarlet
+  filtered_data <- subset(filtered_data, (`Output` %in% circuit))
+  # cell line
+  if (cell_line != "all") {
+    filtered_data <- filtered_data[filtered_data$`cell line` == cell_line,]
+  }
+  filtered_data <- subset(filtered_data, !(`cell line` %in% exclude_cellline))
+  # Sensor
+  if (Mastermix[1] != "all") {
+    filtered_data <- filtered_data[filtered_data$`MM` %in% Mastermix,]
+  }
+  # exclude_MM
+  filtered_data <- filtered_data[filtered_data$`MM` != exclude_MM, ]
+  
+# Reorder the levels of the "cell line" factor so that "wt" comes first
+  filtered_data$`cell line` <- factor(
+    filtered_data$`cell line`, 
+    levels = unique(filtered_data$`cell line`[order(filtered_data$RAS == "wt")])
+  )
+
+# Define the desired order of the MM categories
+desired_order <- c("MM6", "MM7", "MM8", "MM9", "MM10", "MM11", "MM12")
+filtered_data$MM <- factor(filtered_data$MM, levels = desired_order)
+    
+# create the plot
+combined_plot <- ggplot(filtered_data, aes(x = .data[[x_axis]] , y = .data[[y_axis]])) +
+  facet_grid(paste("~", split_by)) +
+  geom_boxplot(position = position_dodge(width = 0.8), width = 0.5, color = "black") +
+  geom_point(aes(col = `cell line`, shape = `cell line`), position = position_jitter(width = 0.2), size = 1, alpha = 1, stroke = 0.6) + scale_shape_manual(values=seq(0,20)) +
+  geom_signif(comparisons = list(c("wildtype", "mutated")),
+               map_signif_level = TRUE, textsize = 3, vjust = 0.5, step_increase = 0.05) +
+  labs(title = paste(plot_name, sep = ""),
+       x = x_axis,
+       y = y_axis) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  #scale_fill_gradient(low = "lightblue", high = "darkblue", name = paste(color_fill, sep = ""))
+  #scale_y_log10()  # Set the y-axis to log scale
+
+  my_theme()
+  
+ print(combined_plot)
+
+
+```
+
+Save plot
+```{r}
+ # Define the output file path and filename
+   output_file <- file.path("/Users/gasenn/Desktop/R scripts/E.GS3.98.1_celllines/plots_with_code", paste(plot_name[1], ".svg", sep = ""))
+  
+  # Save the plot as a PNG file with specified width and height
+  ggsave(output_file, plot = combined_plot, width = 18, height = 6)
+```
+
+
+Test for significance:
+```{r}
+filtered_data_significance <- data[!is.na(data$`Normalized Output [RU]`), ]
+filtered_data_significance <- subset(filtered_data_significance, !(`cell line` %in% exclude_cellline))
+#filtered_data_significance <- subset(filtered_data_significance, (`cell line` != "HCT-116_KRAS-wt"))
+filtered_data_significance <- filtered_data_significance[filtered_data_significance$`MM` == "MM11",]
+
+wt_data_mCerulean <- filtered_data_significance[filtered_data_significance$`RAS_mutation` == "wildtype",]
+mut_data_mCerulean <- filtered_data_significance[filtered_data_significance$`RAS_mutation` == "mutated",]
+
+
+t.test(wt_data_mCerulean$`Normalized Output [RU]`, mut_data_mCerulean$`Normalized Output [RU]`)
+
+wilcox.test(wt_data_mCerulean$`Normalized Output [RU]`, mut_data_mCerulean$`Normalized Output [RU]`)
+```
+
+Test for significance between 2 wt samples:
+```{r}
+filtered_data_significance <- data[!is.na(data$`Normalized Output [RU]`), ]
+filtered_data_significance <- filtered_data_significance[filtered_data_significance$`cell line` != exclude_cellline,]
+filtered_data_significance1 <- filtered_data_significance[filtered_data_significance$`MM` == "MM6",]
+wt_data1_mCerulean <- filtered_data_significance[filtered_data_significance$`RAS_mutation` == "wildtype",]
+
+filtered_data_significance1 <- filtered_data_significance[filtered_data_significance$`MM` == "MM10",]
+wt_data2_mCerulean <- filtered_data_significance[filtered_data_significance$`RAS_mutation` == "wildtype",]
+
+
+t.test(wt_data1_mCerulean$`Normalized Output [RU]`, wt_data2_mCerulean$`Normalized Output [RU]`, var.equal = FALSE)
+
+```
+
+
